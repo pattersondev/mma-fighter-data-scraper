@@ -7,6 +7,8 @@ import (
 	"io/ioutil"
 	"log"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gocolly/colly"
 	"golang.org/x/net/html"
@@ -92,36 +94,38 @@ func shouldVisitURL(url string) bool {
 }
 
 func main() {
-	// Slice to store all fighter stats we scrape
+	start := time.Now() // Start the timer
+
 	var fighters []FighterStats
+	var mu sync.Mutex // Mutex to protect shared data
+	var wg sync.WaitGroup
 
 	c := colly.NewCollector(
 		colly.AllowedDomains("espn.com", "www.espn.com"),
 	)
 
-	// Visit the fighter stats page
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
-		link := e.Request.AbsoluteURL(e.Attr("href")) // Convert to absolute URL
-		// Use shouldVisitURL to determine if the link should be visited
+		link := e.Request.AbsoluteURL(e.Attr("href"))
 		if shouldVisitURL(link) {
-			// Visit the link if it matches
-			e.Request.Visit(link)
+			wg.Add(1)
+			go func(link string) {
+				defer wg.Done()
+				e.Request.Visit(link)
+			}(link)
 		}
 	})
 
-	// Process the response for pages that match the regex
 	c.OnResponse(func(r *colly.Response) {
 		if strings.Contains(r.Request.URL.String(), "stats") {
-			fmt.Printf("Processing URL: %s\n", r.Request.URL.String()) // Debug: Print each processed URL
+			fmt.Printf("Processing URL: %s\n", r.Request.URL.String())
 			if shouldVisitURL(r.Request.URL.String()) {
-				var stats FighterStats // Create a new FighterStats object
+				var stats FighterStats
 				doc, err := html.Parse(bytes.NewReader(r.Body))
 				if err != nil {
 					log.Fatalf("Error parsing HTML: %v", err)
 				}
 				parseFighterStats(doc, &stats)
 
-				// Check for the presence of the striking stats table
 				if hasStrikingStatsTable(doc) {
 					parseStrikingStats(doc, &stats)
 				}
@@ -134,34 +138,33 @@ func main() {
 					parseGroundStats(doc, &stats)
 				}
 
-				// Check if both first and last names are not empty
 				if stats.FirstName != "" && stats.LastName != "" {
+					mu.Lock()
 					fighters = append(fighters, stats)
+					mu.Unlock()
 					fmt.Println("Fighter Added", stats.FirstName, stats.LastName)
 				}
 			}
 		}
 	})
 
-	// Start the scraping process at the fight center
 	c.Visit("https://www.espn.com/mma/fightcenter")
+	wg.Wait() // Wait for all goroutines to finish
 
-	// Start the collector and wait for the task to complete
-	c.Wait()
-
-	// Marshal the fighters slice into JSON
 	jsonData, err := json.MarshalIndent(fighters, "", "  ")
 	if err != nil {
 		log.Fatalf("Error marshaling JSON: %v", err)
 	}
 
-	// Write the JSON data to a file
 	err = ioutil.WriteFile("fighters.json", jsonData, 0644)
 	if err != nil {
 		log.Fatalf("Error writing JSON to file: %v", err)
 	}
 
 	fmt.Println("Data successfully written to fighters.json")
+
+	elapsed := time.Since(start) // Calculate the elapsed time
+	fmt.Printf("Execution time: %s\n", elapsed)
 }
 
 // Helper function to recursively parse HTML nodes and fill the FighterStats struct
