@@ -45,9 +45,28 @@ type ClinchStats struct {
 	RV       string `json:"rv"`     // Reversal Volumes
 	SR       string `json:"sr"`     // Reversal Volumes
 	TDL      string `json:"tdl"`    // takedowns landed
-	TDA      string `json:"td"`     // takedowns attempted
+	TDA      string `json:"tda"`    // takedowns attempted
 	TDS      string `json:"tds"`    // Takedown slams
 	TK_ACC   string `json:"tk_acc"` // Takedown Accuracy
+}
+
+type GroundStats struct {
+	Date     string `json:"date"`
+	Opponent string `json:"opponent"`
+	Event    string `json:"event"`
+	Result   string `json:"result"`
+	SGBL     string `json:"sgbl"` // Significant Ground Body Strikes Landed/
+	SGBA     string `json:"sgba"` // Significant Ground Body Strikes Attempted
+	SGHL     string `json:"sghl"` // Significant Ground Head Strikes Landed
+	SGHA     string `json:"sgha"` // Significant Ground Head Strikes Attempted
+	SGLL     string `json:"sgll"` // Significant Ground Leg Strikes Landed
+	SGLA     string `json:"sgla"` // Significant Ground Leg Strikes Attempted
+	AD       string `json:"ad"`   // Advances
+	ADTB     string `json:"adtb"` // Advance to back
+	ADHG     string `json:"adhg"` // Advance to half guard
+	ADTM     string `json:"adtm"` // Advance to mount
+	ADTS     string `json:"adts"` // Advance to side control
+	SM       string `json:"sm"`   // Submissions
 }
 
 type FighterStats struct {
@@ -63,16 +82,16 @@ type FighterStats struct {
 	SubRecord       string          `json:"sub_record"`
 	StrikingStats   []StrikingStats `json:"striking_stats"` // Array of striking stats
 	ClinchStats     []ClinchStats   `json:"clinch_stats"`   // Array of clinch stats
+	GroundStats     []GroundStats   `json:"ground_stats"`   // Array of ground stats
 }
 
 func shouldVisitURL(url string) bool {
-	return (strings.Contains(url, "espn.com/mma/fightcenter") ||
+	return (strings.Contains(url, "espn.com/mma/fight") ||
 		strings.Contains(url, "espn.com/mma/fighter/")) &&
 		!strings.Contains(url, "news") && !strings.Contains(url, "history") && !strings.Contains(url, "bio") && !strings.Contains(url, "watch") && !strings.Contains(url, "schedule")
 }
 
 func main() {
-
 	// Slice to store all fighter stats we scrape
 	var fighters []FighterStats
 
@@ -84,7 +103,7 @@ func main() {
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
 		link := e.Request.AbsoluteURL(e.Attr("href")) // Convert to absolute URL
 		// Use shouldVisitURL to determine if the link should be visited
-		if shouldVisitURL(link) && strings.Contains(link, "stats") {
+		if shouldVisitURL(link) {
 			// Visit the link if it matches
 			e.Request.Visit(link)
 		}
@@ -92,34 +111,40 @@ func main() {
 
 	// Process the response for pages that match the regex
 	c.OnResponse(func(r *colly.Response) {
-		fmt.Printf("Processing URL: %s\n", r.Request.URL.String()) // Debug: Print each processed URL
-		if shouldVisitURL(r.Request.URL.String()) {
-			var stats FighterStats // Create a new FighterStats object
-			doc, err := html.Parse(bytes.NewReader(r.Body))
-			if err != nil {
-				log.Fatalf("Error parsing HTML: %v", err)
-			}
-			parseFighterStats(doc, &stats)
+		if strings.Contains(r.Request.URL.String(), "stats") {
+			fmt.Printf("Processing URL: %s\n", r.Request.URL.String()) // Debug: Print each processed URL
+			if shouldVisitURL(r.Request.URL.String()) {
+				var stats FighterStats // Create a new FighterStats object
+				doc, err := html.Parse(bytes.NewReader(r.Body))
+				if err != nil {
+					log.Fatalf("Error parsing HTML: %v", err)
+				}
+				parseFighterStats(doc, &stats)
 
-			// Check for the presence of the striking stats table
-			if hasStrikingStatsTable(doc) {
-				parseStrikingStats(doc, &stats)
-			}
+				// Check for the presence of the striking stats table
+				if hasStrikingStatsTable(doc) {
+					parseStrikingStats(doc, &stats)
+				}
 
-			if hasClinchStatsTable(doc) {
-				parseClinchStats(doc, &stats)
-			}
+				if hasClinchStatsTable(doc) {
+					parseClinchStats(doc, &stats)
+				}
 
-			// Check if both first and last names are not empty
-			if stats.FirstName != "" && stats.LastName != "" {
-				fighters = append(fighters, stats)
-				fmt.Println("Fighter Added", stats.FirstName, stats.LastName)
+				if hasGroundStatsTable(doc) {
+					parseGroundStats(doc, &stats)
+				}
+
+				// Check if both first and last names are not empty
+				if stats.FirstName != "" && stats.LastName != "" {
+					fighters = append(fighters, stats)
+					fmt.Println("Fighter Added", stats.FirstName, stats.LastName)
+				}
 			}
 		}
 	})
 
 	// Start the scraping process at the fight center
-	c.Visit("https://www.espn.com/mma/fighter/stats/_/id/3088812/kamaru-usman")
+	c.Visit("https://www.espn.com/mma/fightcenter")
 
 	// Start the collector and wait for the task to complete
 	c.Wait()
@@ -291,27 +316,72 @@ func parseStrikingStats(n *html.Node, fighter *FighterStats) {
 }
 
 func parseClinchStats(n *html.Node, fighter *FighterStats) {
-	// Check if the current node is a table header containing "Clinch"
-	// isClinchTable := false
-	// if n.Type == html.ElementNode && n.Data == "div" && n.FirstChild != nil && strings.Contains(n.FirstChild.Data, "Clinch") {
-	// 	isClinchTable = true
-	// }
+	// Flag to indicate if the first table (striking stats) has been processed
+	var strikingTableProcessed bool
 
-	// If we are in the clinch table, look for tbody
-	if n.Type == html.ElementNode && n.Data == "tbody" {
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			if c.Type == html.ElementNode && c.Data == "tr" {
-				var stats ClinchStats
-				extractClinchStatsFromRow(c, &stats)
-				fighter.ClinchStats = append(fighter.ClinchStats, stats)
+	// Helper function to process tables
+	var processTable func(*html.Node)
+	processTable = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "tbody" {
+			if strikingTableProcessed {
+				// Process the clinch stats table
+				for c := n.FirstChild; c != nil; c = c.NextSibling {
+					if c.Type == html.ElementNode && c.Data == "tr" {
+						var stats ClinchStats
+						extractClinchStatsFromRow(c, &stats)
+						fighter.ClinchStats = append(fighter.ClinchStats, stats)
+					}
+				}
+			} else {
+				// Mark the striking table as processed
+				strikingTableProcessed = true
 			}
+		}
+
+		// Recursively process child nodes
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			processTable(c)
 		}
 	}
 
-	// Recursively process child nodes
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		parseClinchStats(c, fighter)
+	// Start processing from the root node
+	processTable(n)
+}
+
+func parseGroundStats(n *html.Node, fighter *FighterStats) {
+	// Flags to indicate if the first and second tables have been processed
+	var strikingTableProcessed, clinchTableProcessed bool
+
+	// Helper function to process tables
+	var processTable func(*html.Node)
+	processTable = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "tbody" {
+			if strikingTableProcessed && clinchTableProcessed {
+				// Process the ground stats table
+				for c := n.FirstChild; c != nil; c = c.NextSibling {
+					if c.Type == html.ElementNode && c.Data == "tr" {
+						var stats GroundStats
+						extractGroundStatsFromRow(c, &stats)
+						fighter.GroundStats = append(fighter.GroundStats, stats)
+					}
+				}
+			} else if strikingTableProcessed {
+				// Mark the clinch table as processed
+				clinchTableProcessed = true
+			} else {
+				// Mark the striking table as processed
+				strikingTableProcessed = true
+			}
+		}
+
+		// Recursively process child nodes
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			processTable(c)
+		}
 	}
+
+	// Start processing from the root node
+	processTable(n)
 }
 
 func extractClinchStatsFromRow(n *html.Node, stats *ClinchStats) {
@@ -334,22 +404,24 @@ func extractClinchStatsFromRow(n *html.Node, stats *ClinchStats) {
 			case 5:
 				stats.SCBA = text
 			case 6:
-				stats.SCHA = text
+				stats.SCHL = text
 			case 7:
-				stats.SCLL = text
+				stats.SCHA = text
 			case 8:
-				stats.SCLA = text
+				stats.SCLL = text
 			case 9:
-				stats.RV = text
+				stats.SCLA = text
 			case 10:
-				stats.SR = text
+				stats.RV = text
 			case 11:
-				stats.TDL = text
+				stats.SR = text
 			case 12:
-				stats.TDA = text
+				stats.TDL = text
 			case 13:
-				stats.TDS = text
+				stats.TDA = text
 			case 14:
+				stats.TDS = text
+			case 15:
 				stats.TK_ACC = text
 			}
 			tdIndex++
@@ -403,6 +475,50 @@ func extractStrikingStatsFromRow(n *html.Node, stats *StrikingStats) {
 	}
 }
 
+func extractGroundStatsFromRow(n *html.Node, stats *GroundStats) {
+	tdIndex := 0
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.ElementNode && c.Data == "td" {
+			text := extractTextFromNode(c)
+			switch tdIndex {
+			case 0:
+				stats.Date = text
+			case 1:
+				stats.Opponent = extractTextFromNode(c.FirstChild)
+			case 2:
+				stats.Event = extractTextFromNode(c.FirstChild)
+			case 3:
+				stats.Result = extractTextFromNode(c.FirstChild)
+			case 4:
+				stats.SGBL = text
+			case 5:
+				stats.SGBA = text
+			case 6:
+				stats.SGHL = text
+			case 7:
+				stats.SGHA = text
+			case 8:
+				stats.SGLL = text
+			case 9:
+				stats.SGLA = text
+			case 10:
+				stats.AD = text
+			case 11:
+				stats.ADTB = text
+			case 12:
+				stats.ADHG = text
+			case 13:
+				stats.ADTM = text
+			case 14:
+				stats.ADTS = text
+			case 15:
+				stats.SM = text
+			}
+			tdIndex++
+		}
+	}
+}
+
 // Helper function to check if the striking stats table is present
 func hasStrikingStatsTable(n *html.Node) bool {
 	if n.Type == html.ElementNode && n.Data == "div" {
@@ -444,7 +560,26 @@ func hasClinchStatsTable(n *html.Node) bool {
 	}
 
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		if hasStrikingStatsTable(c) {
+		if hasClinchStatsTable(c) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasGroundStatsTable(n *html.Node) bool {
+	if n.Type == html.ElementNode && n.Data == "div" {
+		for _, attr := range n.Attr {
+			if attr.Key == "class" && attr.Val == "Table__Title" {
+				if n.FirstChild != nil && n.FirstChild.Type == html.TextNode && n.FirstChild.Data == "Ground" {
+					return true
+				}
+			}
+		}
+	}
+
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if hasGroundStatsTable(c) {
 			return true
 		}
 	}
