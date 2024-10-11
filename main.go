@@ -291,6 +291,13 @@ func parseStrikingStats(n *html.Node, fighter *FighterStats) {
 }
 
 func parseClinchStats(n *html.Node, fighter *FighterStats) {
+	// Check if the current node is a table header containing "Clinch"
+	// isClinchTable := false
+	// if n.Type == html.ElementNode && n.Data == "div" && n.FirstChild != nil && strings.Contains(n.FirstChild.Data, "Clinch") {
+	// 	isClinchTable = true
+	// }
+
+	// If we are in the clinch table, look for tbody
 	if n.Type == html.ElementNode && n.Data == "tbody" {
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			if c.Type == html.ElementNode && c.Data == "tr" {
@@ -309,50 +316,43 @@ func parseClinchStats(n *html.Node, fighter *FighterStats) {
 
 func extractClinchStatsFromRow(n *html.Node, stats *ClinchStats) {
 	tdIndex := 0
-	if n.Type == html.ElementNode && n.Data == "div" {
-		for _, attr := range n.Attr {
-			if attr.Key == "class" && attr.Val == "Table__Title" {
-				if n.FirstChild != nil && n.FirstChild.Type == html.TextNode && n.FirstChild.Data == "Clinch" {
-					for c := n.FirstChild; c != nil; c = c.NextSibling {
-						if c.Type == html.ElementNode && c.Data == "td" {
-							text := extractTextFromNode(c)
-							switch tdIndex {
-							case 0:
-								stats.Date = text
-							case 1:
-								stats.Opponent = extractTextFromNode(c.FirstChild)
-							case 2:
-								stats.Event = extractTextFromNode(c.FirstChild)
-							case 3:
-								stats.Result = extractTextFromNode(c.FirstChild)
-							case 4:
-								stats.SCBL = text
-							case 5:
-								stats.SCBA = text
-							case 6:
-								stats.SCHA = text
-							case 7:
-								stats.SCLL = text
-							case 8:
-								stats.SCLA = text
-							case 9:
-								stats.RV = text
-							case 10:
-								stats.SR = text
-							case 11:
-								stats.TDL = text
-							case 12:
-								stats.TDA = text
-							case 13:
-								stats.TDS = text
-							case 14:
-								stats.TK_ACC = text
-							}
-							tdIndex++
-						}
-					}
-				}
+
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.ElementNode && c.Data == "td" {
+			text := extractTextFromNode(c)
+			switch tdIndex {
+			case 0:
+				stats.Date = text
+			case 1:
+				stats.Opponent = extractTextFromNode(c.FirstChild)
+			case 2:
+				stats.Event = extractTextFromNode(c.FirstChild)
+			case 3:
+				stats.Result = extractTextFromNode(c.FirstChild)
+			case 4:
+				stats.SCBL = text
+			case 5:
+				stats.SCBA = text
+			case 6:
+				stats.SCHA = text
+			case 7:
+				stats.SCLL = text
+			case 8:
+				stats.SCLA = text
+			case 9:
+				stats.RV = text
+			case 10:
+				stats.SR = text
+			case 11:
+				stats.TDL = text
+			case 12:
+				stats.TDA = text
+			case 13:
+				stats.TDS = text
+			case 14:
+				stats.TK_ACC = text
 			}
+			tdIndex++
 		}
 	}
 
