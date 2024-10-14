@@ -14,6 +14,16 @@ import (
 	"golang.org/x/net/html"
 )
 
+type Fight struct {
+	Date     string `json:"date"`
+	Opponent string `json:"opponent"`
+	Event    string `json:"event"`
+	Result   string `json:"result"`
+	Decision string `json:"decision"`
+	Rnd      string `json:"rnd"`
+	Time     string `json:"time"`
+}
+
 type StrikingStats struct {
 	Date        string `json:"date"`
 	Opponent    string `json:"opponent"`
@@ -85,12 +95,13 @@ type FighterStats struct {
 	StrikingStats   []StrikingStats `json:"striking_stats"` // Array of striking stats
 	ClinchStats     []ClinchStats   `json:"clinch_stats"`   // Array of clinch stats
 	GroundStats     []GroundStats   `json:"ground_stats"`   // Array of ground stats
+	Fights          []Fight         `json:"fights"`         // Array of fights
 }
 
 func shouldVisitURL(url string) bool {
 	return (strings.Contains(url, "espn.com/mma/fight") ||
 		strings.Contains(url, "espn.com/mma/fighter/")) &&
-		!strings.Contains(url, "news") && !strings.Contains(url, "history") && !strings.Contains(url, "bio") && !strings.Contains(url, "watch") && !strings.Contains(url, "schedule")
+		!strings.Contains(url, "news") && !strings.Contains(url, "bio") && !strings.Contains(url, "watch") && !strings.Contains(url, "schedule")
 }
 
 func main() {
@@ -104,6 +115,23 @@ func main() {
 		colly.AllowedDomains("espn.com", "www.espn.com"),
 	)
 
+	// proxySwitcher, err := proxy.RoundRobinProxySwitcher(
+	// 	"http://yV37wuD5:nqNXHE4K@103.136.149.129:36804",
+	// 	"http://yV37wuD5:nqNXHE4K@103.136.149.130:49305",
+	// 	"http://yV37wuD5:nqNXHE4K@103.136.149.131:32532",
+	// 	"http://yV37wuD5:nqNXHE4K@103.136.149.132:45827",
+	// 	"http://yV37wuD5:nqNXHE4K@103.136.149.133:34922",
+	// 	"http://yV37wuD5:nqNXHE4K@103.136.149.134:33599",
+	// 	"http://yV37wuD5:nqNXHE4K@103.136.149.135:20474",
+	// 	"http://yV37wuD5:nqNXHE4K@103.136.149.146:41989",
+	// 	"http://yV37wuD5:nqNXHE4K@103.136.149.147:24025",
+	// 	"http://yV37wuD5:nqNXHE4K@103.136.149.148:49398",
+	// )
+	// if err != nil {
+	// 	log.Fatalf("Error setting up proxy switcher: %v", err)
+	// }
+	// c.SetProxyFunc(proxySwitcher)
+
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
 		link := e.Request.AbsoluteURL(e.Attr("href"))
 		if shouldVisitURL(link) {
@@ -116,10 +144,10 @@ func main() {
 	})
 
 	c.OnResponse(func(r *colly.Response) {
+		var stats FighterStats // Create a single FighterStats object for each response
+
 		if strings.Contains(r.Request.URL.String(), "stats") {
-			fmt.Printf("Processing URL: %s\n", r.Request.URL.String())
 			if shouldVisitURL(r.Request.URL.String()) {
-				var stats FighterStats
 				doc, err := html.Parse(bytes.NewReader(r.Body))
 				if err != nil {
 					log.Fatalf("Error parsing HTML: %v", err)
@@ -137,18 +165,27 @@ func main() {
 				if hasGroundStatsTable(doc) {
 					parseGroundStats(doc, &stats)
 				}
-
-				if stats.FirstName != "" && stats.LastName != "" {
-					mu.Lock()
-					fighters = append(fighters, stats)
-					mu.Unlock()
-					fmt.Println("Fighter Added", stats.FirstName, stats.LastName)
-				}
 			}
+		} else if strings.Contains(r.Request.URL.String(), "history") {
+			if shouldVisitURL(r.Request.URL.String()) {
+				doc, err := html.Parse(bytes.NewReader(r.Body))
+				if err != nil {
+					log.Fatalf("Error parsing HTML: %v", err)
+				}
+				parseFightHistory(doc, &stats) // Ensure the same stats object is used
+			}
+		}
+
+		// Add the fighter to the list if it has a name
+		if stats.FirstName != "" && stats.LastName != "" {
+			mu.Lock()
+			fighters = append(fighters, stats)
+			mu.Unlock()
+			fmt.Println("Fighter Added", stats.FirstName, stats.LastName)
 		}
 	})
 
-	c.Visit("https://www.espn.com/mma/fightcenter")
+	c.Visit("https://www.espn.com/mma/fighter/history/_/id/5134399/nick-klein")
 	wg.Wait() // Wait for all goroutines to finish
 
 	jsonData, err := json.MarshalIndent(fighters, "", "  ")
@@ -522,6 +559,69 @@ func extractGroundStatsFromRow(n *html.Node, stats *GroundStats) {
 	}
 }
 
+func parseFightHistory(n *html.Node, fighter *FighterStats) {
+	// Check if the current node is a div with the class "ResponsiveTable fight-history"
+	if n.Type == html.ElementNode && n.Data == "div" {
+		for _, attr := range n.Attr {
+			if attr.Key == "class" && attr.Val == "ResponsiveTable fight-history" {
+				// Traverse to find the <tbody> within this div
+				findAndParseTbody(n, fighter)
+				return
+			}
+		}
+	}
+
+	// Recursively process child nodes
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		parseFightHistory(c, fighter)
+	}
+}
+
+func findAndParseTbody(n *html.Node, fighter *FighterStats) {
+	if n.Type == html.ElementNode && n.Data == "tbody" {
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type == html.ElementNode && c.Data == "tr" {
+				var fight Fight
+				extractFightHistoryFromRow(c, &fight)
+				fmt.Println(fight)
+				fighter.Fights = append(fighter.Fights, fight)
+			}
+		}
+		return
+	}
+
+	// Recursively process child nodes
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		findAndParseTbody(c, fighter)
+	}
+}
+
+func extractFightHistoryFromRow(n *html.Node, fight *Fight) {
+	tdIndex := 0
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.ElementNode && c.Data == "td" {
+			text := extractTextFromNode(c)
+			switch tdIndex {
+			case 0:
+				fight.Date = text
+			case 1:
+				fight.Opponent = extractTextFromNode(c.FirstChild)
+			case 2:
+				fight.Event = extractTextFromNode(c.FirstChild)
+			case 3:
+				fight.Result = extractTextFromNode(c.FirstChild)
+			case 4:
+				fight.Decision = extractTextFromNode(c.FirstChild)
+			case 5:
+				fight.Rnd = extractTextFromNode(c.FirstChild)
+			case 6:
+				fight.Time = extractTextFromNode(c.FirstChild)
+			}
+			tdIndex++
+		}
+	}
+}
+
 // Helper function to check if the striking stats table is present
 func hasStrikingStatsTable(n *html.Node) bool {
 	if n.Type == html.ElementNode && n.Data == "div" {
@@ -534,15 +634,6 @@ func hasStrikingStatsTable(n *html.Node) bool {
 		}
 	}
 
-	// if n.Type == html.ElementNode && n.Data == "tbody" {
-	// 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-	// 		if c.Type == html.ElementNode && c.Data == "tr" {
-	// 			return true
-	// 		}
-	// 	}
-	// }
-	// Check for the presence of the specific <div> element
-	// Recursively check child nodes
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		if hasStrikingStatsTable(c) {
 			return true
