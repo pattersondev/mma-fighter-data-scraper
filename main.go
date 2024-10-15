@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gocolly/colly"
+	"github.com/gocolly/colly/proxy"
 	"golang.org/x/net/html"
 )
 
@@ -104,33 +106,69 @@ func shouldVisitURL(url string) bool {
 		!strings.Contains(url, "news") && !strings.Contains(url, "bio") && !strings.Contains(url, "watch") && !strings.Contains(url, "schedule")
 }
 
+func standardizeName(name string) string {
+	name = strings.ReplaceAll(name, "-", " ")
+	words := strings.Fields(strings.ToLower(name))
+	for i, word := range words {
+		words[i] = strings.Title(word)
+	}
+	return strings.Join(words, " ")
+}
+
+var userAgents = []string{
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Safari/605.1.15",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0",
+	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.101 Safari/537.36",
+	"Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36",
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 11_5_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:91.0) Gecko/20100101 Firefox/91.0",
+	"Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:91.0) Gecko/20100101 Firefox/91.0",
+	"Mozilla/5.0 (iPad; CPU OS 14_7_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1",
+	"Mozilla/5.0 (Android 11; Mobile; rv:91.0) Gecko/91.0 Firefox/91.0",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36 Edg/92.0.902.78",
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36 OPR/78.0.4093.184",
+}
+
 func main() {
 	start := time.Now() // Start the timer
 
-	var fighters []FighterStats
-	var mu sync.Mutex // Mutex to protect shared data
+	var fighterMap sync.Map // Use a concurrent map to store fighters
+	var mu sync.Mutex       // Mutex to protect shared data
 	var wg sync.WaitGroup
 
 	c := colly.NewCollector(
 		colly.AllowedDomains("espn.com", "www.espn.com"),
+		colly.IgnoreRobotsTxt(),
 	)
 
-	// proxySwitcher, err := proxy.RoundRobinProxySwitcher(
-	// 	"http://yV37wuD5:nqNXHE4K@103.136.149.129:36804",
-	// 	"http://yV37wuD5:nqNXHE4K@103.136.149.130:49305",
-	// 	"http://yV37wuD5:nqNXHE4K@103.136.149.131:32532",
-	// 	"http://yV37wuD5:nqNXHE4K@103.136.149.132:45827",
-	// 	"http://yV37wuD5:nqNXHE4K@103.136.149.133:34922",
-	// 	"http://yV37wuD5:nqNXHE4K@103.136.149.134:33599",
-	// 	"http://yV37wuD5:nqNXHE4K@103.136.149.135:20474",
-	// 	"http://yV37wuD5:nqNXHE4K@103.136.149.146:41989",
-	// 	"http://yV37wuD5:nqNXHE4K@103.136.149.147:24025",
-	// 	"http://yV37wuD5:nqNXHE4K@103.136.149.148:49398",
-	// )
-	// if err != nil {
-	// 	log.Fatalf("Error setting up proxy switcher: %v", err)
-	// }
-	// c.SetProxyFunc(proxySwitcher)
+	// Add random delay
+	c.Limit(&colly.LimitRule{
+		RandomDelay: 4 * time.Second,
+	})
+
+	// Rotate user agents
+	c.OnRequest(func(r *colly.Request) {
+		r.Headers.Set("User-Agent", getRandomUserAgent())
+	})
+
+	proxySwitcher, err := proxy.RoundRobinProxySwitcher(
+		"http://yV37wuD5:nqNXHE4K@103.136.149.129:36804",
+		"http://yV37wuD5:nqNXHE4K@103.136.149.130:49305",
+		"http://yV37wuD5:nqNXHE4K@103.136.149.131:32532",
+		"http://yV37wuD5:nqNXHE4K@103.136.149.132:45827",
+		"http://yV37wuD5:nqNXHE4K@103.136.149.133:34922",
+		"http://yV37wuD5:nqNXHE4K@103.136.149.134:33599",
+		"http://yV37wuD5:nqNXHE4K@103.136.149.135:20474",
+		"http://yV37wuD5:nqNXHE4K@103.136.149.146:41989",
+		"http://yV37wuD5:nqNXHE4K@103.136.149.147:24025",
+		"http://yV37wuD5:nqNXHE4K@103.136.149.148:49398",
+	)
+	if err != nil {
+		log.Fatalf("Error setting up proxy switcher: %v", err)
+	}
+	c.SetProxyFunc(proxySwitcher)
 
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
 		link := e.Request.AbsoluteURL(e.Attr("href"))
@@ -144,7 +182,8 @@ func main() {
 	})
 
 	c.OnResponse(func(r *colly.Response) {
-		var stats FighterStats // Create a single FighterStats object for each response
+		var fighterKey string
+		var stats FighterStats
 
 		if strings.Contains(r.Request.URL.String(), "stats") {
 			if shouldVisitURL(r.Request.URL.String()) {
@@ -165,6 +204,8 @@ func main() {
 				if hasGroundStatsTable(doc) {
 					parseGroundStats(doc, &stats)
 				}
+
+				fighterKey = standardizeName(stats.FirstName + " " + stats.LastName)
 			}
 		} else if strings.Contains(r.Request.URL.String(), "history") {
 			if shouldVisitURL(r.Request.URL.String()) {
@@ -172,21 +213,58 @@ func main() {
 				if err != nil {
 					log.Fatalf("Error parsing HTML: %v", err)
 				}
-				parseFightHistory(doc, &stats) // Ensure the same stats object is used
+				parseFightHistory(doc, &stats)
+
+				// Extract fighter name from URL and standardize it
+				parts := strings.Split(r.Request.URL.Path, "/")
+				fighterKey = standardizeName(parts[len(parts)-1])
 			}
 		}
 
-		// Add the fighter to the list if it has a name
-		if stats.FirstName != "" && stats.LastName != "" {
-			mu.Lock()
-			fighters = append(fighters, stats)
-			mu.Unlock()
-			fmt.Println("Fighter Added", stats.FirstName, stats.LastName)
+		if fighterKey != "" {
+			// Store or update the fighter in the map
+			actual, loaded := fighterMap.LoadOrStore(fighterKey, &stats)
+			if loaded {
+				// If the fighter already exists, update the existing entry
+				existingStats := actual.(*FighterStats)
+				mu.Lock()
+				if len(stats.Fights) > 0 {
+					existingStats.Fights = stats.Fights
+				}
+				if len(stats.StrikingStats) > 0 {
+					existingStats.StrikingStats = stats.StrikingStats
+				}
+				if len(stats.ClinchStats) > 0 {
+					existingStats.ClinchStats = stats.ClinchStats
+				}
+				if len(stats.GroundStats) > 0 {
+					existingStats.GroundStats = stats.GroundStats
+				}
+				// Ensure the name is consistently formatted
+				if existingStats.FirstName == "" || existingStats.LastName == "" {
+					nameParts := strings.Fields(fighterKey)
+					if len(nameParts) > 1 {
+						existingStats.FirstName = nameParts[0]
+						existingStats.LastName = strings.Join(nameParts[1:], " ")
+					} else {
+						existingStats.FirstName = fighterKey
+					}
+				}
+				mu.Unlock()
+			}
+			fmt.Println("Fighter Updated", fighterKey)
 		}
 	})
 
 	c.Visit("https://www.espn.com/mma/fighter/history/_/id/5134399/nick-klein")
 	wg.Wait() // Wait for all goroutines to finish
+
+	// After scraping is complete, convert the map to a slice
+	var fighters []FighterStats
+	fighterMap.Range(func(key, value interface{}) bool {
+		fighters = append(fighters, *value.(*FighterStats))
+		return true
+	})
 
 	jsonData, err := json.MarshalIndent(fighters, "", "  ")
 	if err != nil {
@@ -200,7 +278,7 @@ func main() {
 
 	fmt.Println("Data successfully written to fighters.json")
 
-	elapsed := time.Since(start) // Calculate the elapsed time
+	elapsed := time.Since(start)
 	fmt.Printf("Execution time: %s\n", elapsed)
 }
 
@@ -251,9 +329,9 @@ func extractTextFromNode(n *html.Node) string {
 func extractNameFromHeader(n *html.Node, stats *FighterStats) {
 	if n.Type == html.ElementNode && n.Data == "span" {
 		if stats.FirstName == "" {
-			stats.FirstName = extractTextFromNode(n)
+			stats.FirstName = standardizeName(extractTextFromNode(n))
 		} else if stats.LastName == "" {
-			stats.LastName = extractTextFromNode(n)
+			stats.LastName = standardizeName(extractTextFromNode(n))
 		}
 	}
 
@@ -583,7 +661,6 @@ func findAndParseTbody(n *html.Node, fighter *FighterStats) {
 			if c.Type == html.ElementNode && c.Data == "tr" {
 				var fight Fight
 				extractFightHistoryFromRow(c, &fight)
-				fmt.Println(fight)
 				fighter.Fights = append(fighter.Fights, fight)
 			}
 		}
@@ -678,4 +755,8 @@ func hasGroundStatsTable(n *html.Node) bool {
 		}
 	}
 	return false
+}
+
+func getRandomUserAgent() string {
+	return userAgents[rand.Intn(len(userAgents))]
 }
