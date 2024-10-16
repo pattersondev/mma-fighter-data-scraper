@@ -256,13 +256,19 @@ func main() {
 		}
 	})
 
-	c.Visit("https://www.espn.com/mma/fighter/history/_/id/5134399/nick-klein")
+	c.Visit("https://www.espn.com/mma/")
 	wg.Wait() // Wait for all goroutines to finish
 
 	// After scraping is complete, convert the map to a slice
 	var fighters []FighterStats
 	fighterMap.Range(func(key, value interface{}) bool {
-		fighters = append(fighters, *value.(*FighterStats))
+		fighter := value.(*FighterStats)
+		// Only add fighters with non-empty names
+		if fighter.FirstName != "" && fighter.LastName != "" {
+			fighters = append(fighters, *fighter)
+		} else {
+			fmt.Printf("Skipping fighter with incomplete name: %s %s\n", fighter.FirstName, fighter.LastName)
+		}
 		return true
 	})
 
@@ -684,15 +690,15 @@ func extractFightHistoryFromRow(n *html.Node, fight *Fight) {
 			case 1:
 				fight.Opponent = extractTextFromNode(c.FirstChild)
 			case 2:
-				fight.Event = extractTextFromNode(c.FirstChild)
-			case 3:
 				fight.Result = extractTextFromNode(c.FirstChild)
-			case 4:
+			case 3:
 				fight.Decision = extractTextFromNode(c.FirstChild)
-			case 5:
+			case 4:
 				fight.Rnd = extractTextFromNode(c.FirstChild)
-			case 6:
+			case 5:
 				fight.Time = extractTextFromNode(c.FirstChild)
+			case 6:
+				fight.Event = extractTextFromNode(c.FirstChild)
 			}
 			tdIndex++
 		}
