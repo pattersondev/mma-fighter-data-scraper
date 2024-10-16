@@ -275,7 +275,6 @@ func main() {
 	})
 
 	c.OnError(func(r *colly.Response, err error) {
-		log.Printf("Error on URL: %s - %v\n", r.Request.URL, err)
 		if r.StatusCode == 429 || r.StatusCode == 403 {
 			log.Println("Possible rate limiting or ban detected. Waiting before retry...")
 			time.Sleep(5 * time.Minute)
@@ -806,15 +805,6 @@ func isBannedOrRateLimited(r *colly.Response) bool {
 	// Check for common ban/rate limit status codes
 	if r.StatusCode == 429 || r.StatusCode == 403 {
 		return true
-	}
-
-	// Check for ban/rate limit messages in the response body
-	bodyLower := strings.ToLower(string(r.Body))
-	banKeywords := []string{"banned", "blocked", "rate limit", "too many requests"}
-	for _, keyword := range banKeywords {
-		if strings.Contains(bodyLower, keyword) {
-			return true
-		}
 	}
 
 	return false
