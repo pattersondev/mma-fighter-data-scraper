@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"log"
 	"math/rand"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -278,7 +279,7 @@ func main() {
 		if r.StatusCode == 429 || r.StatusCode == 403 {
 			log.Println("Possible rate limiting or ban detected. Waiting before retry...")
 			time.Sleep(5 * time.Minute)
-			r.Request.Retry()
+			defer r.Request.Retry()
 		}
 	})
 
@@ -309,6 +310,8 @@ func main() {
 	}
 
 	fmt.Println("Data successfully written to fighters.json")
+
+	sendJsonResultToDB(jsonData)
 
 	elapsed := time.Since(start)
 	fmt.Printf("Execution time: %s\n", elapsed)
@@ -808,4 +811,32 @@ func isBannedOrRateLimited(r *colly.Response) bool {
 	}
 
 	return false
+}
+
+func sendJsonResultToDB(jsonData []byte) {
+	url := "https://introducing-first.onrender.com/api/fighters"
+
+	// Create a new POST request with the JSON data
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		log.Fatalf("Error creating request: %v", err)
+	}
+
+	// Set the content type to application/json
+	req.Header.Set("Content-Type", "application/json")
+
+	// Use http.DefaultClient to send the request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatalf("Error sending request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Check the response status
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Failed to send data, status code: %d", resp.StatusCode)
+	} else {
+		log.Println("Data sent successfully")
+	}
 }
